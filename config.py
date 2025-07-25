@@ -1,25 +1,16 @@
+import os
+from dotenv import load_dotenv
 import logging
 
-# MDM API credentials
-MDM_API_URL = "https://your-mdm.com/rest"
-MDM_USER = "admin"
-MDM_PASS = "admin"
+load_dotenv(dotenv_path=".env")
 
-# Telegram Bot Token
-TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+MDM_API_URL = os.getenv("MDM_API_URL")
+MDM_USER = os.getenv("MDM_USER")
+MDM_PASS = os.getenv("MDM_PASS")
 
-# Debug/logging mode
-DEBUG_MODE = True
-
-# Logging config
-LOG_LEVEL = logging.DEBUG if DEBUG_MODE else logging.INFO
-
-logging.basicConfig(
-    level=LOG_LEVEL,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("mdm_bot.log", encoding="utf-8")
-    ]
-)
 logger = logging.getLogger("mdm_bot")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+)
