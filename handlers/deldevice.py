@@ -8,7 +8,7 @@ from telegram.ext import (
     filters,
 )
 from config import logger
-from mdm_api import delete_device
+from mdm_api import wipe_device, delete_device
 
 # Conversation states
 ASK_DEVICE_ID, CONFIRM = range(2)
@@ -16,7 +16,7 @@ ASK_DEVICE_ID, CONFIRM = range(2)
 async def deldevice_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Delete Device started by {update.effective_user.id} ({update.effective_user.username})")
     await update.message.reply_text(
-        "⚠️ Enter the device ID to delete and wipe:",
+        "⚠️ Enter the device ID to wipe and delete:",
         reply_markup=ForceReply(selective=True)
     )
     return ASK_DEVICE_ID
@@ -24,15 +24,15 @@ async def deldevice_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     device_id = update.message.text.strip()
     context.user_data["deldevice_id"] = device_id
-    logger.info(f"Device ID to delete: {device_id}")
+    logger.info(f"Device ID to wipe and delete: {device_id}")
 
     review_msg = (
-        f"⚠️ <b>Confirm Delete & Wipe</b>\n"
+        f"⚠️ <b>Confirm Wipe & Delete</b>\n"
         f"Device ID: <code>{device_id}</code>\n\n"
-        f"Are you sure you want to delete and wipe this device?"
+        f"Are you sure you want to wipe and delete this device?"
     )
     buttons = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Yes, Delete & Wipe", callback_data="deldevice_yes"),
+        [InlineKeyboardButton("✅ Yes, Wipe & Delete", callback_data="deldevice_yes"),
          InlineKeyboardButton("❌ Cancel", callback_data="deldevice_cancel")]
     ])
     await update.message.reply_text(review_msg, parse_mode="HTML", reply_markup=buttons)
@@ -46,23 +46,28 @@ async def do_del_device(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "deldevice_yes":
         device_id = context.user_data.get("deldevice_id")
-        logger.info(f"Attempting delete & wipe for device: {device_id}")
+        logger.info(f"Attempting wipe and delete for device: {device_id}")
 
         try:
-            # The delete_device function should send the correct payload for wipe+delete (API must support this!)
-            result = delete_device(device_id)
+            # 1. Wipe device
+            wipe_result = wipe_device(device_id)
+            logger.info(f"Wipe command result: {wipe_result}")
+
+            # 2. Delete device
+            delete_result = delete_device(device_id)
+            logger.info(f"Delete command result: {delete_result}")
+
             await query.edit_message_text(
-                f"✅ Device deleted and wipe command sent!\n"
+                f"✅ Wipe command sent and device deleted.\n"
                 f"Device ID: <code>{device_id}</code>",
                 parse_mode="HTML"
             )
-            logger.info(f"Device deleted successfully: {result}")
         except Exception as e:
-            logger.exception("Device delete failed.")
-            await query.edit_message_text(f"❌ Failed to delete device: {e}")
+            logger.exception("Device wipe/delete failed.")
+            await query.edit_message_text(f"❌ Failed to wipe and delete device: {e}")
     else:
-        await query.edit_message_text("❌ Delete device cancelled.")
-        logger.info(f"Device delete cancelled by {user.id}")
+        await query.edit_message_text("❌ Wipe/delete cancelled.")
+        logger.info(f"Device wipe/delete cancelled by {user.id}")
     return ConversationHandler.END
 
 deldevice_conv = ConversationHandler(
