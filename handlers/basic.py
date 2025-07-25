@@ -1,19 +1,22 @@
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ContextTypes
 from config import logger
-from mdm_api import api_login, logout
+
+main_menu_keyboard = [
+    [KeyboardButton("Device Info"), KeyboardButton("Add Device")],
+    [KeyboardButton("Delete Device")],
+    [KeyboardButton("Login"), KeyboardButton("Logout")]
+]
+main_menu_markup = ReplyKeyboardMarkup(main_menu_keyboard, resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"/start by {update.effective_user.id} ({update.effective_user.username})")
     await update.message.reply_text(
         "👋 Welcome to the MDM Bot.\n\n"
-        "Commands:\n"
-        "• /login – Log in to MDM\n"
-        "• /device – Get device info\n"
-        "• /adddevice – Register new device\n"
-        "• /deldevice – Wipe & delete device\n"
-        "• /logout – Log out"
+        "Choose an action below, or use a command.",
+        reply_markup=main_menu_markup
     )
+
 
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"/login by {update.effective_user.id} ({update.effective_user.username})")
