@@ -1,88 +1,82 @@
 import requests
 import hashlib
+import os
+import time
 from config import MDM_API_URL, MDM_USER, MDM_PASS, logger
 
-jwt_token = None
+TOKEN_FILE = "mdm_token.txt"
+TOKEN_EXPIRY_FILE = "mdm_token_expiry.txt"
 
-def md5_upper(text):
-    return hashlib.md5(text.encode("utf-8")).hexdigest().upper()
+def _save_token(token, expires_in=82800):  # 82800s ≈ 23h
+    with open(TOKEN_FILE, "w") as f:
+        f.write(token)
+    # Save expiry timestamp (for auto refresh)
+    expires_at = int(time.time()) + expires_in - 300  # 5 min early
+    with open(TOKEN_EXPIRY_FILE, "w") as f:
+        f.write(str(expires_at))
 
-def api_login():
-    global jwt_token
-    logger.debug("MDM API login...")
-    resp = requests.post(
-        f"{MDM_API_URL}/public/jwt/login",
-        json={"login": MDM_USER, "password": md5_upper(MDM_PASS)}
-    )
-    resp.raise_for_status()
-    jwt_token = resp.json()["id_token"]
-    logger.info("Obtained JWT token.")
-    return jwt_token
+def _load_token():
+    if not os.path.isfile(TOKEN_FILE):
+        return None
+    with open(TOKEN_FILE) as f:
+        token = f.read().strip()
+    # Check expiry
+    if os.path.isfile(TOKEN_EXPIRY_FILE):
+        with open(TOKEN_EXPIRY_FILE) as f:
+            expires_at = int(f.read().strip())
+        if time.time() >= expires_at:
+            return None
+    return token
 
-def api_headers():
-    if not jwt_token:
-        api_login()
-    return {"Authorization": f"Bearer {jwt_token}"}
+def get_jwt_token():
+    # Try to load token from file and check if still valid
+    token = _load_token()
+    if token:
+        return token
+    # If not, log in and get a new one
+    logger.info("Fetching new JWT token from MDM API...")
+    url = f"{MDM_API_URL}/public/jwt/login"
+    password_md5 = hashlib.md5(MDM_PASS.encode('utf-8')).hexdigest().upper()
+    payload = {"login": MDM_USER, "password": password_md5}
+    r = requests.post(url, json=payload, timeout=10)
+    r.raise_for_status()
+    data = r.json()
+    token = data.get("id_token")
+    if not token:
+        logger.error("No JWT token in login response!")
+        raise RuntimeError("Failed to obtain JWT token!")
+    _save_token(token)
+    return token
 
-def logout():
-    global jwt_token
-    jwt_token = None
-    logger.info("Logged out, JWT cleared.")
-
-def get_device_info(device_id_or_name):
-    logger.debug(f"Searching for device: {device_id_or_name}")
+def get_device_info(device_id):
+    """
+    Looks up device by ID, IMEI, or name.
+    Returns device dict or None if not found.
+    """
+    token = get_jwt_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {
+        "pageNum": 1,
+        "pageSize": 1,
+        "searchValue": device_id,
+        "sortField": "id",
+        "sortOrder": "asc"
+    }
     url = f"{MDM_API_URL}/private/devices/search"
-    payload = {"pageSize": 1000, "pageNum": 1}
-    resp = requests.post(url, json=payload, headers=api_headers())
-    if resp.status_code == 401:
-        logger.warning("JWT expired, re-authenticating...")
-        api_login()
-        resp = requests.post(url, json=payload, headers=api_headers())
-    resp.raise_for_status()
-    devices = resp.json().get("devices", [])
-    for d in devices:
-        if str(d.get("id")) == str(device_id_or_name) or d.get("deviceName") == device_id_or_name:
-            logger.info(f"Device found: {d}")
-            return d
-    logger.info("Device not found.")
-    return None
+    logger.debug(f"Querying device info from: {url} with payload {payload}")
+    r = requests.post(url, headers=headers, json=payload, timeout=10)
+    if r.status_code == 401:
+        # Token expired or invalid; try to get a new one once
+        logger.warning("JWT token expired, refreshing…")
+        os.remove(TOKEN_FILE)
+        os.remove(TOKEN_EXPIRY_FILE)
+        token = get_jwt_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        r = requests.post(url, headers=headers, json=payload, timeout=10)
+    r.raise_for_status()
+    data = r.json()
+    devices = data.get("items", [])
+    logger.debug(f"Device search result: {devices}")
+    return devices[0] if devices else None
 
-def add_device(device_info):
-    logger.debug(f"Adding device: {device_info}")
-    # Try using PUT /private/devices for newest API; fallback to POST if needed
-    url = f"{MDM_API_URL}/private/devices"
-    resp = requests.put(url, json=device_info, headers=api_headers())
-    if resp.status_code in (404, 405):
-        url = f"{MDM_API_URL}/private/device/create"
-        resp = requests.post(url, json=device_info, headers=api_headers())
-    if resp.status_code == 401:
-        logger.warning("JWT expired, re-authenticating...")
-        api_login()
-        resp = requests.put(url, json=device_info, headers=api_headers())
-    resp.raise_for_status()
-    logger.info("Device added successfully.")
-    return resp.json()
-
-def wipe_device(device_id):
-    logger.debug(f"Wiping device: {device_id}")
-    url = f"{MDM_API_URL}/plugins/devicereset/private/reset/{device_id}"
-    resp = requests.put(url, headers=api_headers())
-    if resp.status_code == 401:
-        logger.warning("JWT expired, re-authenticating...")
-        api_login()
-        resp = requests.put(url, headers=api_headers())
-    resp.raise_for_status()
-    logger.info("Wipe command sent.")
-    return resp.json() if resp.text else {}
-
-def delete_device(device_id):
-    logger.debug(f"Deleting device: {device_id}")
-    url = f"{MDM_API_URL}/private/devices/{device_id}"
-    resp = requests.delete(url, headers=api_headers())
-    if resp.status_code == 401:
-        logger.warning("JWT expired, re-authenticating...")
-        api_login()
-        resp = requests.delete(url, headers=api_headers())
-    resp.raise_for_status()
-    logger.info("Device deleted successfully.")
-    return resp.json() if resp.text else {}
+# (Add more API helper functions below as needed...)
