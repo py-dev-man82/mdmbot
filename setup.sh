@@ -10,7 +10,7 @@ if ! $PYTHON --version | grep -qE "3\.(1[0-9]|[2-9][0-9])"; then
     exit 1
 fi
 
-# 2. Create virtual environment
+# 2. Create virtual environment if needed
 if [ ! -d "venv" ]; then
     echo "Creating Python virtual environment..."
     $PYTHON -m venv venv
@@ -47,10 +47,47 @@ EOF
 
 echo "Saved configuration to .env"
 
+# 6. Offer to set up as a systemd service
+echo
+read -p "Set up the bot to autostart on boot using systemd? (y/N): " AUTOSTART
+if [[ "$AUTOSTART" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+    SERVICE_NAME="mdm-bot"
+    SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME.service"
+    BOT_DIR="$(pwd)"
+    USERNAME="$(whoami)"
+
+    echo "Creating systemd service file at $SERVICE_PATH"
+    sudo bash -c "cat > $SERVICE_PATH" <<EOF
+[Unit]
+Description=MDM Telegram Bot
+After=network.target
+
+[Service]
+User=$USERNAME
+WorkingDirectory=$BOT_DIR
+Environment=\"PATH=$BOT_DIR/venv/bin\"
+ExecStart=$BOT_DIR/venv/bin/python3 $BOT_DIR/bot.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    echo "Reloading systemd, enabling and starting $SERVICE_NAME..."
+    sudo systemctl daemon-reload
+    sudo systemctl enable $SERVICE_NAME
+    sudo systemctl restart $SERVICE_NAME
+
+    echo
+    echo "Bot will now start automatically on boot and restart if it crashes."
+    echo "Check logs with: sudo journalctl -u $SERVICE_NAME -f"
+fi
+
 echo
 echo "=== Setup complete! ==="
-echo "To start the bot:"
+echo "To run the bot manually:"
 echo "  source venv/bin/activate"
 echo "  python3 bot.py"
 echo
-echo "For production/autostart, consider using a systemd service."
+echo "You can edit the .env file to change settings."
+echo "To update the bot code, just restart the systemd service or rerun manually."
